@@ -1,3 +1,7 @@
+// Copyright 2017, personal.andre. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
 package pool
 
 import (
@@ -13,26 +17,27 @@ const (
 
 var ErrMaxThreadLimit = errors.New("input thread nums more than Max nums")
 
+// HandleEvent 处理事件
 type HandleEvent func()
 
-// ThreadInfo
+// ThreadInfo 协程结构定义
 type ThreadInfo struct {
 	f   HandleEvent
 	sem chan int
 	no  int
 }
 
-// ThreadPool
+// ThreadPool 协程池定义
 type ThreadPool struct {
-	threadnums    int
-	freeChans     chan int
-	mx            sync.Mutex
-	threadInfos   []*ThreadInfo
-	queuesmx      sync.Mutex
-	queues        []HandleEvent
-	queueInterval time.Duration // queue handle interval default 5 millsecond
-	cancel        context.CancelFunc
-	isover        bool
+	threadnums    int                // 携程数量
+	threadChans   chan int           // 协程控制器
+	mx            sync.Mutex         // 协程保护锁
+	threadInfos   []*ThreadInfo      // 携程信息
+	queuesmx      sync.Mutex         // 事件队列锁
+	queues        []HandleEvent      // 事件队列
+	queueInterval time.Duration      // queue handle interval default 5 millsecond
+	cancel        context.CancelFunc // 协程控制上下文函数
+	isover        bool               // 协程池是否结束
 }
 
 // CreateThreadPool
@@ -45,7 +50,7 @@ func CreateThreadPool(threadnums int) (*ThreadPool, error) {
 	//
 	pool := &ThreadPool{
 		threadnums:    threadnums,
-		freeChans:     make(chan int, threadnums),
+		threadChans:   make(chan int, threadnums),
 		mx:            sync.Mutex{},
 		queuesmx:      sync.Mutex{},
 		threadInfos:   make([]*ThreadInfo, 0),
@@ -71,8 +76,8 @@ func (tp *ThreadPool) DistoryPool() {
 	tp.isover = true
 	// stop monitor
 	tp.cancel()
-	// close freechans
-	close(tp.freeChans)
+	// close threadchans
+	close(tp.threadChans)
 	// close thread sem
 	for _, v := range tp.threadInfos {
 		close(v.sem)
@@ -97,8 +102,8 @@ func (tp *ThreadPool) queueMonitor(ctx context.Context) {
 			continue
 		}
 		tp.queuesmx.Lock()
-		handle := tp.queues[len(tp.queues)-1]
-		tp.queues = tp.queues[:len(tp.queues)-1]
+		handle := tp.queues[0]
+		tp.queues = tp.queues[1:]
 		tp.queuesmx.Unlock()
 		//
 		tp.dispachTask2Thread(handle)
@@ -110,7 +115,7 @@ func (tp *ThreadPool) GetFreeThreadInfo(handle HandleEvent) {
 	if tp == nil || tp.isover {
 		return
 	}
-	if len(tp.freeChans) == tp.threadnums {
+	if len(tp.threadChans) == tp.threadnums {
 		tp.queuesmx.Lock()
 		tp.queues = append(tp.queues, handle)
 		tp.queuesmx.Unlock()
@@ -130,7 +135,7 @@ func (tp *ThreadPool) dispachTask2Thread(handle HandleEvent) {
 		return
 	}
 	// free sem
-	tp.freeChans <- 0
+	tp.threadChans <- 0
 	//
 	if len(tp.threadInfos) == 0 {
 		return
@@ -162,6 +167,6 @@ func (tp *ThreadPool) threadFunc(threadInfo *ThreadInfo) {
 		tp.threadInfos = append(tp.threadInfos, threadInfo)
 		tp.mx.Unlock()
 		//
-		<-tp.freeChans
+		<-tp.threadChans
 	}
 }
